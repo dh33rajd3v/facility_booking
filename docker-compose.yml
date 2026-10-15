@@ -1,0 +1,12 @@
+# Optional: local MongoDB for development. Start with `docker compose up -d mongo`.
+services:
+  mongo:
+    image: mongo:7.0
+    container_name: facility-booking-mongo
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo-data:/data/db
+
+volumes:
+  mongo-data:
