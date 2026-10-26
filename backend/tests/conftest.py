@@ -22,9 +22,10 @@ from app.db.create_database import ensure_database
 from app.db.seed import seed_all
 from app.db.session import create_db_engine, get_db_pinger
 from app.main import create_app
+from app.services.auth_service import create_session, sign_in_user
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-TABLES = "slot_windows, tariffs, facility_slot_types, facilities"
+TABLES = "request_lines, requests, sessions, users, slot_windows, tariffs, facility_slot_types, facilities"
 
 
 def _test_database_url() -> str:
@@ -86,7 +87,15 @@ def seeded_db(db):
 
 @pytest.fixture
 def settings(test_database_url) -> Settings:
-    return Settings(app_env="test", database_url=test_database_url)
+    return Settings(
+        app_env="test",
+        database_url=test_database_url,
+        app_secret_key="test-secret",
+        google_client_id="test-client-id.apps.googleusercontent.com",
+        google_client_secret="test-client-secret",
+        frontend_url="http://localhost:5173",
+        dev_login_enabled=False,
+    )
 
 
 def _make_client(app):
@@ -116,3 +125,48 @@ async def offline_client(settings):
     async with _make_client(app) as http:
         yield http
     dead.dispose()
+
+
+@pytest.fixture
+def app(settings, session_factory, seeded_db):
+    return create_app(settings=settings, session_factory=session_factory)
+
+
+class SignedIn:
+    """An HTTP client signed in as one user, sending the session cookie and CSRF header."""
+
+    def __init__(self, http: AsyncClient, user_id: int, csrf_token: str) -> None:
+        self.http = http
+        self.user_id = user_id
+        self.csrf_token = csrf_token
+
+    def __getattr__(self, name):
+        return getattr(self.http, name)
+
+
+@pytest.fixture
+async def sign_in(app, session_factory, settings):
+    """Factory: ``await sign_in("someone@gmail.com", category="PRIVATE")`` -> SignedIn client."""
+    opened: list[AsyncClient] = []
+
+    async def _sign_in(email: str, category: str | None = "PRIVATE", name: str = "Test User") -> SignedIn:
+        with session_factory() as db:
+            user = sign_in_user(
+                db, sub=f"sub-{email}", email=email, name=name, email_verified=True,
+                iit_domain=settings.iit_email_domain,
+            )
+            if category and user.rate_category is None:
+                user.rate_category = category
+            token, session = create_session(db, user, settings.session_ttl_hours)
+            user_id, csrf = user.id, session.csrf_token
+        http = AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+            headers={"Cookie": f"fb_session={token}", "X-CSRF-Token": csrf},
+        )
+        opened.append(http)
+        return SignedIn(http, user_id, csrf)
+
+    yield _sign_in
+    for http in opened:
+        await http.aclose()
