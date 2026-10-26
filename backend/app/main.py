@@ -9,8 +9,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api import facilities, health
-from app.core.config import Settings, get_settings
+from app.api import auth, facilities, health, requests, users
+from app.core.config import INSECURE_DEFAULT_SECRET, Settings, get_settings
 from app.core.errors import register_error_handlers
 from app.db.session import create_session_factory
 
@@ -23,6 +23,8 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker[S
     The schema is created by Alembic migrations (`alembic upgrade head`), not at startup.
     """
     settings = settings or get_settings()
+    if settings.app_env not in ("development", "test") and settings.app_secret_key == INSECURE_DEFAULT_SECRET:
+        raise RuntimeError("Set APP_SECRET_KEY to a long random value outside development.")
     owns_engine = session_factory is None
     session_factory = session_factory or create_session_factory(settings)
 
@@ -34,7 +36,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker[S
             if owns_engine:
                 session_factory.kw["bind"].dispose()
 
-    app = FastAPI(title=settings.app_name, version="0.2.0", lifespan=lifespan)
+    app = FastAPI(title=settings.app_name, version="0.3.0-week2", lifespan=lifespan)
     app.state.settings = settings
     app.state.session_factory = session_factory
 
@@ -49,6 +51,9 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker[S
 
     app.include_router(health.router, prefix=API_PREFIX)
     app.include_router(facilities.router, prefix=API_PREFIX)
+    app.include_router(auth.router, prefix=API_PREFIX)
+    app.include_router(users.router, prefix=API_PREFIX)
+    app.include_router(requests.router, prefix=API_PREFIX)
     return app
 
 

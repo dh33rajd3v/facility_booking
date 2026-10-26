@@ -1,16 +1,17 @@
 """SQLAlchemy table definitions (the single source of truth for the schema).
 
 Every change here must have a matching Alembic migration in ``alembic/versions``;
-``tests/test_migrations.py`` fails if the two drift apart.
+``tests/test_schema.py::test_migrations_match_models`` fails if the two drift apart.
 
 Constraint names are written out explicitly so the models and migrations always agree.
 """
 
-from datetime import datetime, time
+from datetime import date, datetime, time
 
 from sqlalchemy import (
     Boolean,
     CheckConstraint,
+    Date,
     DateTime,
     ForeignKeyConstraint,
     Index,
@@ -20,6 +21,7 @@ from sqlalchemy import (
     Time,
     UniqueConstraint,
     func,
+    text,
     true,
 )
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
@@ -30,6 +32,8 @@ SECTIONS = ("ACADEMIC", "SPORTS")
 CATEGORIES = ("PRIVATE", "GOVT", "IIT")
 UNITS = ("FULL_DAY", "HALF_DAY", "PER_DAY", "THREE_HOUR")
 HALVES = ("FIRST", "SECOND")
+# Request lifecycle states from the LLD (§8.1). Only DRAFT is used in Week 2.
+REQUEST_STATUSES = ("DRAFT", "SUBMITTED", "WITH_SECTION", "REJECTED", "WITH_ESTATE", "COSTED", "ADVANCE_INTIMATED")
 
 
 def in_list(column: str, values: tuple[str, ...]) -> str:
@@ -152,4 +156,113 @@ class SlotWindow(Base):
             name="ck_slot_windows_time_range",
         ),
         CheckConstraint("half IS NULL OR " + in_list("half", HALVES), name="ck_slot_windows_half_valid"),
+    )
+
+
+class User(TimestampMixin, Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    # Google's stable account id ("sub" claim). Never trust an email sent by the browser.
+    google_sub: Mapped[str] = mapped_column(String(255))
+    email: Mapped[str] = mapped_column(String(320))
+    name: Mapped[str] = mapped_column(String(200))
+    # NULL until an external user picks GOVT or PRIVATE; IIT is only ever set by the email rule.
+    rate_category: Mapped[str | None] = mapped_column(String(20))
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    __table_args__ = (
+        UniqueConstraint("google_sub", name="uq_users_google_sub"),
+        UniqueConstraint("email", name="uq_users_email"),
+        CheckConstraint("email = lower(email)", name="ck_users_email_lowercase"),
+        CheckConstraint(
+            "rate_category IS NULL OR " + in_list("rate_category", CATEGORIES), name="ck_users_rate_category_valid"
+        ),
+    )
+
+
+class UserSession(Base):
+    """A signed-in browser. The cookie holds a random token; only its SHA-256 hash is stored."""
+
+    __tablename__ = "sessions"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    user_id: Mapped[int] = mapped_column(Integer)
+    token_hash: Mapped[str] = mapped_column(String(64))
+    csrf_token: Mapped[str] = mapped_column(String(64))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+
+    user: Mapped[User] = relationship(lazy="joined")
+
+    __table_args__ = (
+        ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_sessions_user_id", ondelete="CASCADE"),
+        UniqueConstraint("token_hash", name="uq_sessions_token_hash"),
+        Index("ix_sessions_user_id", "user_id"),
+    )
+
+
+class BookingRequest(TimestampMixin, Base):
+    """One event request (the parent). Each facility/date/slot is a RequestLine."""
+
+    __tablename__ = "requests"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ref_no: Mapped[str | None] = mapped_column(String(20))  # assigned on submission (Week 3)
+    user_id: Mapped[int] = mapped_column(Integer)
+    status: Mapped[str] = mapped_column(String(30), server_default=text("'DRAFT'"))
+    organisation_name_address: Mapped[str] = mapped_column(Text)
+    applicant_name: Mapped[str] = mapped_column(String(200))
+    contact_email: Mapped[str] = mapped_column(String(320))  # copied from the verified Google email
+    office_contact: Mapped[str] = mapped_column(String(30))
+    mobile: Mapped[str] = mapped_column(String(30))
+    purpose: Mapped[str] = mapped_column(Text)
+    participants: Mapped[int] = mapped_column(Integer)
+    submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    lines: Mapped[list["RequestLine"]] = relationship(
+        back_populates="request",
+        cascade="all, delete-orphan",
+        lazy="selectin",
+        order_by=lambda: [RequestLine.booking_date, RequestLine.id],
+    )
+
+    __table_args__ = (
+        ForeignKeyConstraint(["user_id"], ["users.id"], name="fk_requests_user_id"),
+        UniqueConstraint("ref_no", name="uq_requests_ref_no"),
+        CheckConstraint(in_list("status", REQUEST_STATUSES), name="ck_requests_status_valid"),
+        CheckConstraint("participants > 0", name="ck_requests_participants_positive"),
+        Index("ix_requests_user_created", "user_id", "created_at"),
+        Index("ix_requests_status_updated", "status", "updated_at"),
+    )
+
+
+class RequestLine(TimestampMixin, Base):
+    """One facility on one date in one slot, inside a request."""
+
+    __tablename__ = "request_lines"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    request_id: Mapped[int] = mapped_column(Integer)
+    facility_id: Mapped[int] = mapped_column(Integer)
+    booking_date: Mapped[date] = mapped_column(Date)
+    slot_key: Mapped[str] = mapped_column(String(32))
+
+    request: Mapped[BookingRequest] = relationship(back_populates="lines")
+    facility: Mapped[Facility] = relationship(lazy="joined", viewonly=True)
+    slot: Mapped[SlotWindow] = relationship(lazy="joined", viewonly=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["request_id"], ["requests.id"], name="fk_request_lines_request_id", ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(["facility_id"], ["facilities.id"], name="fk_request_lines_facility_id"),
+        # The slot must be one of that facility's slots (e.g. no half-day slot for a classroom).
+        ForeignKeyConstraint(
+            ["facility_id", "slot_key"],
+            ["slot_windows.facility_id", "slot_windows.slot_key"],
+            name="fk_request_lines_facility_slot",
+        ),
+        UniqueConstraint("request_id", "facility_id", "booking_date", "slot_key", name="uq_request_lines_unique"),
+        Index("ix_request_lines_facility_date", "facility_id", "booking_date"),
     )
