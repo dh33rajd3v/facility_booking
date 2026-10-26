@@ -12,10 +12,14 @@ class Settings(BaseSettings):
     app_env: str = Field(default="development")
     app_name: str = Field(default="IIT Ropar Facility Booking")
 
-    mongodb_uri: str = Field(default="mongodb://localhost:27017")
-    mongodb_database: str = Field(default="facility_booking")
-    # Fail fast when MongoDB is unreachable instead of hanging for pymongo's 30 s default.
-    mongodb_server_selection_timeout_ms: int = Field(default=5000, ge=100)
+    # SQLAlchemy URL. Format: postgresql+psycopg://USER:PASSWORD@HOST:PORT/DATABASE
+    database_url: str = Field(default="postgresql+psycopg://postgres:postgres@localhost:5432/facility_booking")
+    # Separate database used by pytest. Its name must end in "_test" (tests wipe it).
+    test_database_url: str = Field(
+        default="postgresql+psycopg://postgres:postgres@localhost:5432/facility_booking_test"
+    )
+    # Seconds to wait for PostgreSQL before reporting it as unreachable.
+    database_connect_timeout: int = Field(default=5, ge=1)
 
     # Comma-separated list of browser origins allowed to call the API.
     frontend_url: str = Field(default="http://localhost:5173")

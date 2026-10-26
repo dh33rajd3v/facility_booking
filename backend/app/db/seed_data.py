@@ -1,4 +1,4 @@
-"""Master data seeded into MongoDB (LLD §5 and §6).
+"""Master data seeded into the database (LLD §5 and §6).
 
 Amounts are in INR, taken from the week-3 presentation's tariff table.
 "No charges" is stored as amount 0 with a display label, per LLD §5.2.
