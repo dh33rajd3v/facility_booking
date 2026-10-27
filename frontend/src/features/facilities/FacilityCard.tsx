@@ -3,7 +3,7 @@ import { CATEGORY_LABELS, CATEGORY_SHORT, GROUP_LABELS, SECTION_LABELS, UNIT_LAB
 
 const CATEGORIES: RateCategory[] = ["PRIVATE", "GOVT", "IIT"];
 
-export function FacilityCard({ facility }: { facility: Facility }) {
+export function FacilityCard({ facility, highlight }: { facility: Facility; highlight?: RateCategory | null }) {
   const headingId = `facility-${facility.code}`;
   const units = facility.slot_types;
 
@@ -53,8 +53,9 @@ export function FacilityCard({ facility }: { facility: Facility }) {
             <tr>
               <th scope="col">Rate</th>
               {CATEGORIES.map((c) => (
-                <th key={c} scope="col" title={CATEGORY_LABELS[c]}>
+                <th key={c} scope="col" title={CATEGORY_LABELS[c]} className={c === highlight ? "is-mine" : undefined}>
                   {CATEGORY_SHORT[c]}
+                  {c === highlight && <span className="visually-hidden"> (your rate)</span>}
                 </th>
               ))}
             </tr>
@@ -66,7 +67,10 @@ export function FacilityCard({ facility }: { facility: Facility }) {
                 {CATEGORIES.map((c) => {
                   const tariff = amountFor(unit, c);
                   return (
-                    <td key={c} className={tariff?.amount === 0 ? "is-free" : undefined}>
+                    <td
+                      key={c}
+                      className={[tariff?.amount === 0 ? "is-free" : "", c === highlight ? "is-mine" : ""].join(" ").trim() || undefined}
+                    >
                       {tariff ? formatInr(tariff.amount) : "—"}
                     </td>
                   );

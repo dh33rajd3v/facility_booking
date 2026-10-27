@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { fetchFacilities } from "../../api/facilities";
 import { ApiError } from "../../api/client";
+import { useAuth } from "../../auth/AuthContext";
 import { EmptyState, ErrorState, LoadingState } from "../../components/States";
 import type { Facility, FacilityGroup } from "../../types/facility";
 import { GROUP_LABELS } from "../../utils/format";
@@ -15,6 +16,7 @@ type LoadState =
   | { kind: "ready"; facilities: Facility[] };
 
 export function FacilityCatalogue() {
+  const { user } = useAuth();
   const [state, setState] = useState<LoadState>({ kind: "loading" });
   const [filter, setFilter] = useState<Filter>("ALL");
   const [reloadKey, setReloadKey] = useState(0);
@@ -78,7 +80,7 @@ export function FacilityCatalogue() {
           </p>
           <div className="grid">
             {visible.map((facility) => (
-              <FacilityCard key={facility.id} facility={facility} />
+              <FacilityCard key={facility.id} facility={facility} highlight={user?.rate_category} />
             ))}
           </div>
         </>
