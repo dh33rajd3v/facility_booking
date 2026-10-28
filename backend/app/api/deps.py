@@ -1,5 +1,8 @@
 """Shared FastAPI dependencies: settings, the signed-in user, and CSRF protection."""
 
+from collections.abc import Callable
+from dataclasses import dataclass
+
 from fastapi import Depends, Request
 from sqlalchemy.orm import Session
 
@@ -8,6 +11,7 @@ from app.core.errors import AppError
 from app.core.security import constant_time_equals
 from app.db.models import User, UserSession
 from app.db.session import get_db
+from app.services import roles_service
 from app.services.auth_service import find_session
 
 SESSION_COOKIE = "fb_session"
@@ -39,3 +43,24 @@ def get_current_session(request: Request, db: Session = Depends(get_db)) -> User
 
 def get_current_user(session: UserSession = Depends(get_current_session)) -> User:
     return session.user
+
+
+@dataclass
+class StaffContext:
+    user: User
+    roles: list[str]
+
+
+def require_role(*allowed: str) -> Callable[..., StaffContext]:
+    """Dependency factory: 403 unless the signed-in user has an active role in ``allowed``.
+
+    Hiding a button in the browser is not security; every desk endpoint uses this check.
+    """
+
+    def dependency(user: User = Depends(get_current_user), db: Session = Depends(get_db)) -> StaffContext:
+        roles = roles_service.active_roles(db, user.email)
+        if not set(roles) & set(allowed):
+            raise AppError("FORBIDDEN", "You don't have access to this desk.", 403, {"required": list(allowed)})
+        return StaffContext(user=user, roles=roles)
+
+    return dependency

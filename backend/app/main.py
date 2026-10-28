@@ -9,7 +9,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session, sessionmaker
 
-from app.api import auth, facilities, health, requests, users
+from app.api import auth, availability, facilities, health, requests, users, workflow
 from app.core.config import INSECURE_DEFAULT_SECRET, Settings, get_settings
 from app.core.errors import register_error_handlers
 from app.db.session import create_session_factory
@@ -36,7 +36,7 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker[S
             if owns_engine:
                 session_factory.kw["bind"].dispose()
 
-    app = FastAPI(title=settings.app_name, version="0.3.0-week2", lifespan=lifespan)
+    app = FastAPI(title=settings.app_name, version="0.4.0-week3", lifespan=lifespan)
     app.state.settings = settings
     app.state.session_factory = session_factory
 
@@ -54,6 +54,8 @@ def create_app(settings: Settings | None = None, session_factory: sessionmaker[S
     app.include_router(auth.router, prefix=API_PREFIX)
     app.include_router(users.router, prefix=API_PREFIX)
     app.include_router(requests.router, prefix=API_PREFIX)
+    app.include_router(availability.router, prefix=API_PREFIX)
+    app.include_router(workflow.router, prefix=API_PREFIX)
     return app
 
 

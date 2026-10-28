@@ -15,6 +15,8 @@ class MeOut(BaseModel):
     needs_category: bool
     # Send this back in the X-CSRF-Token header on every POST/PUT/PATCH/DELETE.
     csrf_token: str
+    # Week 3: active staff desk roles (FACILITY, ACADEMIC, SPORTS, ESTATE, ADMIN). Empty for requesters.
+    roles: list[str] = []
 
 
 class RateCategoryIn(BaseModel):
