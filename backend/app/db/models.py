@@ -24,6 +24,7 @@ from sqlalchemy import (
     text,
     true,
 )
+from sqlalchemy.dialects.postgresql import TSRANGE, ExcludeConstraint, Range
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 # Allowed values, shared by models, migrations and seed data.
@@ -32,8 +33,20 @@ SECTIONS = ("ACADEMIC", "SPORTS")
 CATEGORIES = ("PRIVATE", "GOVT", "IIT")
 UNITS = ("FULL_DAY", "HALF_DAY", "PER_DAY", "THREE_HOUR")
 HALVES = ("FIRST", "SECOND")
-# Request lifecycle states from the LLD (§8.1). Only DRAFT is used in Week 2.
-REQUEST_STATUSES = ("DRAFT", "SUBMITTED", "WITH_SECTION", "REJECTED", "WITH_ESTATE", "COSTED", "ADVANCE_INTIMATED")
+# Request lifecycle states from the LLD (§8.1), plus RETURNED (LLD §8.5 note): sent back to
+# the requester by Facilities for correction.
+REQUEST_STATUSES = (
+    "DRAFT",
+    "SUBMITTED",
+    "RETURNED",
+    "WITH_SECTION",
+    "REJECTED",
+    "WITH_ESTATE",
+    "COSTED",
+    "ADVANCE_INTIMATED",
+)
+LINE_DECISIONS = ("PENDING", "CONFIRMED", "REJECTED")
+STAFF_ROLES = ("FACILITY", "ACADEMIC", "SPORTS", "ESTATE", "ADMIN")
 
 
 def in_list(column: str, values: tuple[str, ...]) -> str:
@@ -219,6 +232,13 @@ class BookingRequest(TimestampMixin, Base):
     purpose: Mapped[str] = mapped_column(Text)
     participants: Mapped[int] = mapped_column(Integer)
     submitted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Week 3: fixed at submission so later profile changes don't alter the request.
+    rate_category_snapshot: Mapped[str | None] = mapped_column(String(20))
+    terms_version: Mapped[str | None] = mapped_column(String(50))
+    terms_accepted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Week 3: Facilities can return a submitted request for correction.
+    return_reason: Mapped[str | None] = mapped_column(Text)
+    returned_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
     lines: Mapped[list["RequestLine"]] = relationship(
         back_populates="request",
@@ -252,6 +272,24 @@ class RequestLine(TimestampMixin, Base):
     facility: Mapped[Facility] = relationship(lazy="joined", viewonly=True)
     slot: Mapped[SlotWindow] = relationship(lazy="joined", viewonly=True)
 
+    # Week 3: snapshots taken at submission (LLD §5.2, §10.7). NULL while the request is a draft.
+    facility_code_snapshot: Mapped[str | None] = mapped_column(String(32))
+    facility_name_snapshot: Mapped[str | None] = mapped_column(String(200))
+    section_snapshot: Mapped[str | None] = mapped_column(String(20))
+    slot_label_snapshot: Mapped[str | None] = mapped_column(String(100))
+    rate_category_snapshot: Mapped[str | None] = mapped_column(String(20))
+    tariff_id_snapshot: Mapped[int | None] = mapped_column(Integer)
+    unit_snapshot: Mapped[str | None] = mapped_column(String(20))
+    line_amount_snapshot: Mapped[int | None] = mapped_column(Integer)
+
+    # Week 3: the Academic or Sports section's decision on this line.
+    decision: Mapped[str] = mapped_column(String(20), server_default=text("'PENDING'"))
+    decision_remark: Mapped[str | None] = mapped_column(Text)
+    decided_by: Mapped[int | None] = mapped_column(Integer)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+    decider: Mapped["User | None"] = relationship(viewonly=True)
+
     __table_args__ = (
         ForeignKeyConstraint(
             ["request_id"], ["requests.id"], name="fk_request_lines_request_id", ondelete="CASCADE"
@@ -264,5 +302,100 @@ class RequestLine(TimestampMixin, Base):
             name="fk_request_lines_facility_slot",
         ),
         UniqueConstraint("request_id", "facility_id", "booking_date", "slot_key", name="uq_request_lines_unique"),
+        ForeignKeyConstraint(["tariff_id_snapshot"], ["tariffs.id"], name="fk_request_lines_tariff_snapshot"),
+        ForeignKeyConstraint(["decided_by"], ["users.id"], name="fk_request_lines_decided_by"),
+        CheckConstraint(in_list("decision", LINE_DECISIONS), name="ck_request_lines_decision_valid"),
+        CheckConstraint(
+            "decision <> 'REJECTED' OR decision_remark IS NOT NULL", name="ck_request_lines_reject_needs_remark"
+        ),
         Index("ix_request_lines_facility_date", "facility_id", "booking_date"),
+        Index("ix_request_lines_section_decision", "section_snapshot", "decision"),
+    )
+
+
+class ReferenceCounter(Base):
+    """One row per year, incremented atomically to hand out FB-YYYY-NNN reference numbers."""
+
+    __tablename__ = "reference_counters"
+
+    year: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=False)
+    last_value: Mapped[int] = mapped_column(Integer)
+
+
+class Reservation(Base):
+    """A confirmed booking: one facility for one time range.
+
+    The exclusion constraint makes PostgreSQL itself refuse two reservations of the same
+    facility whose time ranges overlap, even if two staff members confirm at the same moment.
+    """
+
+    __tablename__ = "reservations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    request_line_id: Mapped[int] = mapped_column(Integer)
+    facility_id: Mapped[int] = mapped_column(Integer)
+    # Institute-local (IST) wall-clock time range, half-open: [start, end).
+    during: Mapped[Range[datetime]] = mapped_column(TSRANGE)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["request_line_id"], ["request_lines.id"], name="fk_reservations_request_line_id", ondelete="CASCADE"
+        ),
+        ForeignKeyConstraint(["facility_id"], ["facilities.id"], name="fk_reservations_facility_id"),
+        UniqueConstraint("request_line_id", name="uq_reservations_request_line"),
+        ExcludeConstraint(("facility_id", "="), ("during", "&&"), name="ex_reservations_no_overlap", using="gist"),
+    )
+
+
+class StatusEvent(Base):
+    """Append-only audit log: one row per workflow action (LLD §10.8, §15)."""
+
+    __tablename__ = "status_events"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    request_id: Mapped[int] = mapped_column(Integer)
+    request_line_id: Mapped[int | None] = mapped_column(Integer)
+    event_type: Mapped[str] = mapped_column(String(40))
+    from_status: Mapped[str | None] = mapped_column(String(30))
+    to_status: Mapped[str | None] = mapped_column(String(30))
+    actor_id: Mapped[int | None] = mapped_column(Integer)
+    actor_role: Mapped[str | None] = mapped_column(String(20))
+    remark: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+
+    actor: Mapped["User | None"] = relationship(lazy="joined", viewonly=True)
+    line: Mapped["RequestLine | None"] = relationship(lazy="joined", viewonly=True)
+
+    __table_args__ = (
+        ForeignKeyConstraint(["request_id"], ["requests.id"], name="fk_status_events_request_id", ondelete="CASCADE"),
+        ForeignKeyConstraint(
+            ["request_line_id"], ["request_lines.id"], name="fk_status_events_request_line_id", ondelete="SET NULL"
+        ),
+        ForeignKeyConstraint(["actor_id"], ["users.id"], name="fk_status_events_actor_id"),
+        Index("ix_status_events_request_created", "request_id", "created_at"),
+    )
+
+
+class StaffRole(Base):
+    """Gives a staff email a desk role.
+
+    Keyed by email (not user id) so roles can be assigned before the person's first sign-in;
+    it is matched against the verified Google email of the signed-in user.
+    """
+
+    __tablename__ = "staff_roles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    email: Mapped[str] = mapped_column(String(320))
+    role: Mapped[str] = mapped_column(String(20))
+    active: Mapped[bool] = mapped_column(Boolean, server_default=true())
+    assigned_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    assigned_by: Mapped[str | None] = mapped_column(String(320))
+
+    __table_args__ = (
+        UniqueConstraint("email", "role", name="uq_staff_roles_email_role"),
+        CheckConstraint(in_list("role", STAFF_ROLES), name="ck_staff_roles_role_valid"),
+        CheckConstraint("email = lower(email)", name="ck_staff_roles_email_lowercase"),
+        Index("ix_staff_roles_role_active", "role", "active"),
     )

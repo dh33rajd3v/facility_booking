@@ -15,6 +15,8 @@ def test_migrations_match_models(engine):
     """Fails if someone changes app/db/models.py without writing a migration (or vice versa)."""
     with engine.connect() as conn:
         diff = compare_metadata(MigrationContext.configure(conn, opts={"compare_type": True}), Base.metadata)
+    # Alembic doesn't model exclusion constraints, so it sees their backing index as "extra".
+    diff = [d for d in diff if not (d[0] == "remove_index" and d[1].name.startswith("ex_"))]
     assert diff == []
 
 

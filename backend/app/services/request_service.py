@@ -2,7 +2,7 @@
 
 Business rules live here (not in the routes or the browser):
 - only the owner can see or change a request (others get 404);
-- only DRAFT requests can be edited;
+- only DRAFT requests, or requests RETURNED by Facilities for correction, can be edited;
 - each line's facility, slot and date are checked, and a tariff must exist for the
   user's rate category on that date;
 - lines in the same request can't overlap (same facility, same date, overlapping times).
@@ -31,7 +31,7 @@ from app.schemas.request import (
 )
 from app.services.slots import slots_overlap
 
-EDITABLE_STATUSES = {"DRAFT"}
+EDITABLE_STATUSES = {"DRAFT", "RETURNED"}
 MAX_LINES_PER_REQUEST = 20
 MAX_DAYS_AHEAD = 365  # Assumption: bookings up to a year ahead; confirm with Facilities.
 PREVIEW_NOTE = (
@@ -94,7 +94,7 @@ class RequestService:
         request = self._editable(user, request_id)
         if len(request.lines) >= MAX_LINES_PER_REQUEST:
             raise AppError("TOO_MANY_LINES", f"A request can have at most {MAX_LINES_PER_REQUEST} facilities.", 422)
-        self._validate_line(user, request, data.facility_id, data.booking_date, data.slot_key, exclude_line_id=None)
+        self.validate_line(user, request, data.facility_id, data.booking_date, data.slot_key, exclude_line_id=None)
         request.lines.append(
             RequestLine(facility_id=data.facility_id, booking_date=data.booking_date, slot_key=data.slot_key)
         )
@@ -107,7 +107,7 @@ class RequestService:
         facility_id = data.facility_id or line.facility_id
         booking_date = data.booking_date or line.booking_date
         slot_key = data.slot_key or line.slot_key
-        self._validate_line(user, request, facility_id, booking_date, slot_key, exclude_line_id=line.id)
+        self.validate_line(user, request, facility_id, booking_date, slot_key, exclude_line_id=line.id)
         line.facility_id, line.booking_date, line.slot_key = facility_id, booking_date, slot_key
         self.db.commit()
         return self._reload(user, request.id)
@@ -138,7 +138,8 @@ class RequestService:
         self.db.expire_all()  # pick up changed facility/slot relationships after edits
         return self.detail(user, request_id)
 
-    def _validate_line(self, user, request, facility_id, booking_date, slot_key, exclude_line_id) -> SlotWindow:
+    def validate_line(self, user, request, facility_id, booking_date, slot_key, exclude_line_id) -> SlotWindow:
+        """Check one line against all draft rules. Also used again at submission."""
         facility = self.facilities.get(facility_id)
         if facility is None or not facility.active:
             raise AppError("INVALID_FACILITY", "That facility is not available for booking.", 422)
@@ -181,77 +182,109 @@ class RequestService:
         return slot
 
     def _detail(self, user: User, request: BookingRequest) -> RequestOut:
-        lines: list[RequestLineOut] = []
-        subtotal = 0
-        missing = 0
-        for line in request.lines:
-            rate = None
-            if user.rate_category is not None:
-                tariff = self.facilities.effective_tariff(
-                    line.facility_id, user.rate_category, line.slot.slot_type, start_of_day_ist(line.booking_date)
-                )
-                if tariff is not None:
-                    rate = RatePreviewOut(
-                        category=tariff.category, unit=tariff.unit, amount=tariff.amount,
-                        display_label=tariff.display_label,
-                    )
-                    subtotal += tariff.amount
-            if rate is None:
-                missing += 1
-            lines.append(
-                RequestLineOut(
-                    id=line.id,
-                    facility_id=line.facility_id,
-                    facility_code=line.facility.code,
-                    facility_name=line.facility.name,
-                    section=line.facility.section,
-                    booking_date=line.booking_date,
-                    slot_key=line.slot_key,
-                    slot_label=line.slot.label,
-                    slot_type=line.slot.slot_type,
-                    start=_hhmm(line.slot.start_time),
-                    end=_hhmm(line.slot.end_time),
-                    rate=rate,
-                )
-            )
-        return RequestOut(
-            id=request.id,
-            ref_no=request.ref_no,
-            status=request.status,
-            editable=request.status in EDITABLE_STATUSES,
-            event=EventDetailsOut(
-                organisation_name_address=request.organisation_name_address,
-                applicant_name=request.applicant_name,
-                contact_email=request.contact_email,
-                office_contact=request.office_contact,
-                mobile=request.mobile,
-                purpose=request.purpose,
-                participants=request.participants,
-            ),
-            lines=lines,
-            charges_preview=ChargesPreviewOut(
-                category=user.rate_category, booking_subtotal=subtotal, lines_without_rate=missing, note=PREVIEW_NOTE
-            ),
-            created_at=request.created_at,
-            updated_at=request.updated_at,
-            submitted_at=request.submitted_at,
-        )
+        return build_request_out(self.facilities, request, user.rate_category)
 
     @staticmethod
     def _summary(request: BookingRequest) -> RequestSummaryOut:
-        names: list[str] = []
-        for line in request.lines:
-            if line.facility.name not in names:
-                names.append(line.facility.name)
-        summary = ", ".join(names[:2]) + (f" +{len(names) - 2} more" if len(names) > 2 else "")
-        return RequestSummaryOut(
-            id=request.id,
-            ref_no=request.ref_no,
-            status=request.status,
-            purpose=request.purpose,
-            facility_summary=summary or "No facilities added yet",
-            line_count=len(request.lines),
-            first_date=min((line.booking_date for line in request.lines), default=None),
-            created_at=request.created_at,
-            updated_at=request.updated_at,
+        return build_summary(request)
+
+
+def build_request_out(facilities: FacilityRepository, request: BookingRequest, live_category: str | None) -> RequestOut:
+    """Request detail for the requester or staff.
+
+    Drafts (and returned requests) preview the current tariff for ``live_category``.
+    Submitted requests show the rates frozen at submission, so tariff changes don't affect them.
+    """
+    submitted = request.submitted_at is not None and request.status not in EDITABLE_STATUSES
+    category = request.rate_category_snapshot if submitted else live_category
+    lines: list[RequestLineOut] = []
+    subtotal = 0
+    missing = 0
+    for line in request.lines:
+        rate = None
+        if submitted and line.line_amount_snapshot is not None:
+            rate = RatePreviewOut(
+                category=line.rate_category_snapshot,
+                unit=line.unit_snapshot,
+                amount=line.line_amount_snapshot,
+                display_label=f"₹{line.line_amount_snapshot:,}" if line.line_amount_snapshot else "No charges",
+            )
+        elif not submitted and category is not None:
+            tariff = facilities.effective_tariff(
+                line.facility_id, category, line.slot.slot_type, start_of_day_ist(line.booking_date)
+            )
+            if tariff is not None:
+                rate = RatePreviewOut(
+                    category=tariff.category, unit=tariff.unit, amount=tariff.amount,
+                    display_label=tariff.display_label,
+                )
+        if rate is None:
+            missing += 1
+        elif line.decision != "REJECTED":
+            subtotal += rate.amount
+        lines.append(
+            RequestLineOut(
+                id=line.id,
+                facility_id=line.facility_id,
+                facility_code=line.facility_code_snapshot or line.facility.code,
+                facility_name=line.facility_name_snapshot or line.facility.name,
+                section=line.section_snapshot or line.facility.section,
+                booking_date=line.booking_date,
+                slot_key=line.slot_key,
+                slot_label=line.slot_label_snapshot or line.slot.label,
+                slot_type=line.slot.slot_type,
+                start=_hhmm(line.slot.start_time),
+                end=_hhmm(line.slot.end_time),
+                rate=rate,
+                decision=line.decision,
+                decision_remark=line.decision_remark,
+                decided_by_name=line.decider.name if line.decider is not None else None,
+                decided_at=line.decided_at,
+            )
         )
+    return RequestOut(
+        id=request.id,
+        ref_no=request.ref_no,
+        status=request.status,
+        editable=request.status in EDITABLE_STATUSES,
+        event=EventDetailsOut(
+            organisation_name_address=request.organisation_name_address,
+            applicant_name=request.applicant_name,
+            contact_email=request.contact_email,
+            office_contact=request.office_contact,
+            mobile=request.mobile,
+            purpose=request.purpose,
+            participants=request.participants,
+        ),
+        lines=lines,
+        charges_preview=ChargesPreviewOut(
+            category=category, booking_subtotal=subtotal, lines_without_rate=missing, note=PREVIEW_NOTE
+        ),
+        created_at=request.created_at,
+        updated_at=request.updated_at,
+        submitted_at=request.submitted_at,
+        rate_category_snapshot=request.rate_category_snapshot,
+        terms_version=request.terms_version,
+        return_reason=request.return_reason,
+        returned_at=request.returned_at,
+    )
+
+
+def build_summary(request: BookingRequest) -> RequestSummaryOut:
+    names: list[str] = []
+    for line in request.lines:
+        name = line.facility_name_snapshot or line.facility.name
+        if name not in names:
+            names.append(name)
+    summary = ", ".join(names[:2]) + (f" +{len(names) - 2} more" if len(names) > 2 else "")
+    return RequestSummaryOut(
+        id=request.id,
+        ref_no=request.ref_no,
+        status=request.status,
+        purpose=request.purpose,
+        facility_summary=summary or "No facilities added yet",
+        line_count=len(request.lines),
+        first_date=min((line.booking_date for line in request.lines), default=None),
+        created_at=request.created_at,
+        updated_at=request.updated_at,
+    )

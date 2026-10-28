@@ -7,7 +7,7 @@ Those values are always decided by the server.
 
 import re
 from datetime import date, datetime
-from typing import Annotated
+from typing import Annotated, Literal
 
 from pydantic import AfterValidator, BaseModel, ConfigDict, Field, model_validator
 
@@ -111,15 +111,22 @@ class RequestLineOut(BaseModel):
     slot_type: Unit
     start: str | None
     end: str | None
-    # Rate for the signed-in user's category today. None if no tariff applies on that date.
+    # Draft: the user's current rate for that date. Submitted: the rate fixed at submission.
+    # None if no tariff applies.
     rate: RatePreviewOut | None
+    # Week 3: the Academic/Sports section's decision.
+    decision: Literal["PENDING", "CONFIRMED", "REJECTED"] = "PENDING"
+    decision_remark: str | None = None
+    decided_by_name: str | None = None
+    decided_at: datetime | None = None
 
 
 class ChargesPreviewOut(BaseModel):
     category: Category | None
+    # Sum of line rates, excluding lines a section has rejected.
     booking_subtotal: int
     lines_without_rate: int
-    # Always False in Week 2: final costs (GST, cleaning, deposit, electricity) come later.
+    # Always False until Week 4: final costs (GST, cleaning, deposit, electricity) come later.
     is_final: bool = False
     note: str
 
@@ -128,6 +135,7 @@ class RequestOut(BaseModel):
     id: int
     ref_no: str | None
     status: str
+    # The requester can change it (DRAFT, or RETURNED for correction) and submit it.
     editable: bool
     event: EventDetailsOut
     lines: list[RequestLineOut]
@@ -135,6 +143,10 @@ class RequestOut(BaseModel):
     created_at: datetime
     updated_at: datetime
     submitted_at: datetime | None
+    rate_category_snapshot: Category | None = None
+    terms_version: str | None = None
+    return_reason: str | None = None
+    returned_at: datetime | None = None
 
 
 class RequestSummaryOut(BaseModel):
@@ -152,3 +164,30 @@ class RequestSummaryOut(BaseModel):
 class RequestListOut(BaseModel):
     items: list[RequestSummaryOut]
     total: int
+
+
+class SubmitIn(BaseModel):
+    model_config = _INPUT
+
+    terms_accepted: bool
+    terms_version: str = Field(min_length=1, max_length=50)
+
+
+class TermsOut(BaseModel):
+    version: str
+    text: str
+    # True until the institute's approved terms are supplied (LLD §19 item 9).
+    is_placeholder: bool
+
+
+class TimelineEventOut(BaseModel):
+    id: int
+    event_type: str
+    label: str
+    from_status: str | None
+    to_status: str | None
+    actor_name: str
+    actor_role: str | None
+    remark: str | None
+    line: str | None
+    created_at: datetime

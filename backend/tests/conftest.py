@@ -22,10 +22,14 @@ from app.db.create_database import ensure_database
 from app.db.seed import seed_all
 from app.db.session import create_db_engine, get_db_pinger
 from app.main import create_app
+from app.services import roles_service
 from app.services.auth_service import create_session, sign_in_user
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
-TABLES = "request_lines, requests, sessions, users, slot_windows, tariffs, facility_slot_types, facilities"
+TABLES = (
+    "reservations, status_events, reference_counters, staff_roles, request_lines, requests, sessions, users, "
+    "slot_windows, tariffs, facility_slot_types, facilities"
+)
 
 
 def _test_database_url() -> str:
@@ -149,8 +153,12 @@ async def sign_in(app, session_factory, settings):
     """Factory: ``await sign_in("someone@gmail.com", category="PRIVATE")`` -> SignedIn client."""
     opened: list[AsyncClient] = []
 
-    async def _sign_in(email: str, category: str | None = "PRIVATE", name: str = "Test User") -> SignedIn:
+    async def _sign_in(
+        email: str, category: str | None = "PRIVATE", name: str = "Test User", roles: tuple[str, ...] = ()
+    ) -> SignedIn:
         with session_factory() as db:
+            for role in roles:
+                roles_service.grant(db, email, role, assigned_by="test")
             user = sign_in_user(
                 db, sub=f"sub-{email}", email=email, name=name, email_verified=True,
                 iit_domain=settings.iit_email_domain,
