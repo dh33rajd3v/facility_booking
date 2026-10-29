@@ -1,5 +1,6 @@
 import { NavLink, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
+import { desksFor } from "../features/staff/desks";
 import { CATEGORY_SHORT } from "../utils/format";
 
 export function AppHeader() {
@@ -28,6 +29,11 @@ export function AppHeader() {
               <NavLink to="/requests" end className="app-header__link">
                 My requests
               </NavLink>
+              {desksFor(me.roles).map((d) => (
+                <NavLink key={d.desk} to={d.path} className="app-header__link">
+                  {d.short} desk
+                </NavLink>
+              ))}
             </>
           )}
           <NavLink to="/facilities" className="app-header__link">

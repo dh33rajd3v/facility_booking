@@ -1,10 +1,13 @@
 import { Link } from "react-router-dom";
 import { useAuth } from "../../auth/AuthContext";
 import { CATEGORY_LABELS } from "../../utils/format";
+import { desksFor } from "../staff/desks";
+import "../../styles/staff.css";
 
 export function HomePage() {
   const { user } = useAuth();
   if (!user) return null;
+  const desks = desksFor(user.roles);
 
   return (
     <section className="page" aria-labelledby="home-heading">
@@ -20,6 +23,21 @@ export function HomePage() {
           )}
         </p>
       </div>
+
+      {desks.length > 0 && (
+        <>
+          <h2>Your desks</h2>
+          <div className="home-cards">
+            {desks.map((d) => (
+              <Link key={d.desk} to={d.path} className="home-card home-card--staff">
+                <span className="home-card__title">{d.title}</span>
+                <span className="home-card__text">{d.description}</span>
+              </Link>
+            ))}
+          </div>
+          <h2>Bookings</h2>
+        </>
+      )}
 
       <div className="home-cards">
         <Link to="/requests/new" className="home-card">

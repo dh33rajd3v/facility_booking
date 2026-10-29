@@ -1,6 +1,7 @@
 import type { ReactElement } from "react";
 import { Link, Navigate, Route, Routes } from "react-router-dom";
 import { RequireAuth } from "../auth/RequireAuth";
+import { RequireRole } from "../auth/RequireRole";
 import { AppHeader } from "../components/AppHeader";
 import { ApiStatus } from "../components/ApiStatus";
 import { CategoryPage } from "../features/auth/CategoryPage";
@@ -12,6 +13,9 @@ import { FacilityLinesPage } from "../features/requests/FacilityLinesPage";
 import { MyRequestsPage } from "../features/requests/MyRequestsPage";
 import { NewRequestPage } from "../features/requests/NewRequestPage";
 import { RequestDetailPage } from "../features/requests/RequestDetailPage";
+import { ReviewSubmitPage } from "../features/requests/ReviewSubmitPage";
+import { DeskQueuePage } from "../features/staff/DeskQueuePage";
+import { StaffRequestPage } from "../features/staff/StaffRequestPage";
 
 function NotFound() {
   return (
@@ -52,6 +56,39 @@ export function App() {
           <Route path="/requests/:id" element={authed(<RequestDetailPage />)} />
           <Route path="/requests/:id/edit" element={authed(<EditEventPage />)} />
           <Route path="/requests/:id/facilities" element={authed(<FacilityLinesPage />)} />
+          <Route path="/requests/:id/review" element={authed(<ReviewSubmitPage />)} />
+          <Route
+            path="/desk/facilities"
+            element={
+              <RequireRole roles={["FACILITY"]}>
+                <DeskQueuePage desk="FACILITY" />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/desk/academic"
+            element={
+              <RequireRole roles={["ACADEMIC"]}>
+                <DeskQueuePage desk="ACADEMIC" />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/desk/sports"
+            element={
+              <RequireRole roles={["SPORTS"]}>
+                <DeskQueuePage desk="SPORTS" />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/desk/requests/:id"
+            element={
+              <RequireRole roles={["FACILITY", "ACADEMIC", "SPORTS", "ADMIN"]}>
+                <StaffRequestPage />
+              </RequireRole>
+            }
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </main>

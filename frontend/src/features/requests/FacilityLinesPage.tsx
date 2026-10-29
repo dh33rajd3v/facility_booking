@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { getAvailability } from "../../api/availability";
 import { errorMessage } from "../../api/client";
 import { fetchFacilities } from "../../api/facilities";
 import { addLine, deleteLine, updateLine } from "../../api/requests";
@@ -7,6 +8,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { StepIndicator } from "../../components/StepIndicator";
 import { ErrorState, LoadingState } from "../../components/States";
 import type { Facility, FacilityGroup } from "../../types/facility";
+import type { SlotAvailability } from "../../types/availability";
 import type { RequestLine } from "../../types/request";
 import { CATEGORY_SHORT, GROUP_LABELS, SECTION_LABELS, formatDate, formatInr, formatTotal, todayInIndia } from "../../utils/format";
 import { useRequest } from "./useRequest";
@@ -33,6 +35,26 @@ export function FacilityLinesPage() {
   const [editingLineId, setEditingLineId] = useState<number | null>(null);
   const [formError, setFormError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  // Week 3: which slots are already booked (confirmed) for the chosen facility and date.
+  const [availability, setAvailability] = useState<Record<string, SlotAvailability>>({});
+
+  useEffect(() => {
+    if (!form.facilityId || !form.date) {
+      setAvailability({});
+      return;
+    }
+    let cancelled = false;
+    getAvailability(Number(form.facilityId), form.date)
+      .then((data) => {
+        if (!cancelled) setAvailability(Object.fromEntries(data.slots.map((s) => [s.slot_key, s])));
+      })
+      .catch(() => {
+        if (!cancelled) setAvailability({}); // availability is a hint; the server re-checks on submit
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [form.facilityId, form.date]);
 
   useEffect(() => {
     fetchFacilities()
@@ -160,11 +182,15 @@ export function FacilityLinesPage() {
               onChange={(e) => setForm({ ...form, slotKey: e.target.value })}
             >
               <option value="">{facility ? "Choose a slot…" : "Choose a facility first"}</option>
-              {facility?.slot_options.map((s) => (
-                <option key={s.slot_key} value={s.slot_key}>
-                  {s.slot_type === "HALF_DAY" ? `Half day: ${s.label}` : s.label}
-                </option>
-              ))}
+              {facility?.slot_options.map((s) => {
+                const taken = availability[s.slot_key]?.available === false;
+                return (
+                  <option key={s.slot_key} value={s.slot_key} disabled={taken}>
+                    {s.slot_type === "HALF_DAY" ? `Half day: ${s.label}` : s.label}
+                    {taken ? " (already booked)" : ""}
+                  </option>
+                );
+              })}
             </select>
           </div>
         </div>
@@ -259,8 +285,16 @@ export function FacilityLinesPage() {
       <p className="hint">{preview.note}</p>
 
       <div className="form-actions">
-        <button type="button" className="button" onClick={() => navigate(`/requests/${id}`)}>
-          Done: view draft
+        <button type="button" className="button button--secondary" onClick={() => navigate(`/requests/${id}`)}>
+          Save and finish later
+        </button>
+        <button
+          type="button"
+          className="button"
+          disabled={request.lines.length === 0}
+          onClick={() => navigate(`/requests/${id}/review`)}
+        >
+          Continue to review
         </button>
       </div>
     </section>

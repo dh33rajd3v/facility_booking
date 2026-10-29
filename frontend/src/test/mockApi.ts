@@ -34,6 +34,7 @@ export function meBody(overrides: Record<string, unknown> = {}) {
     is_iit: false,
     needs_category: false,
     csrf_token: "csrf-123",
+    roles: [],
     ...overrides,
   };
 }

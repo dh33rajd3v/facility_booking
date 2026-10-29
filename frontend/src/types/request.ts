@@ -3,6 +3,7 @@ import type { RateCategory, Section, SlotUnit } from "./facility";
 export type RequestStatus =
   | "DRAFT"
   | "SUBMITTED"
+  | "RETURNED"
   | "WITH_SECTION"
   | "REJECTED"
   | "WITH_ESTATE"
@@ -29,6 +30,8 @@ export interface RatePreview {
   display_label: string;
 }
 
+export type LineDecision = "PENDING" | "CONFIRMED" | "REJECTED";
+
 export interface RequestLine {
   id: number;
   facility_id: number;
@@ -42,6 +45,10 @@ export interface RequestLine {
   start: string | null;
   end: string | null;
   rate: RatePreview | null;
+  decision: LineDecision;
+  decision_remark: string | null;
+  decided_by_name: string | null;
+  decided_at: string | null;
 }
 
 export interface ChargesPreview {
@@ -63,6 +70,10 @@ export interface BookingRequest {
   created_at: string;
   updated_at: string;
   submitted_at: string | null;
+  rate_category_snapshot: RateCategory | null;
+  terms_version: string | null;
+  return_reason: string | null;
+  returned_at: string | null;
 }
 
 export interface RequestSummary {
@@ -86,4 +97,23 @@ export interface LineInput {
   facility_id: number;
   booking_date: string;
   slot_key: string;
+}
+
+export interface Terms {
+  version: string;
+  text: string;
+  is_placeholder: boolean;
+}
+
+export interface TimelineEvent {
+  id: number;
+  event_type: string;
+  label: string;
+  from_status: string | null;
+  to_status: string | null;
+  actor_name: string;
+  actor_role: string | null;
+  remark: string | null;
+  line: string | null;
+  created_at: string;
 }

@@ -1,5 +1,5 @@
 import type { FacilityGroup, RateCategory, Section, SlotUnit } from "../types/facility";
-import type { RequestStatus } from "../types/request";
+import type { LineDecision, RequestStatus } from "../types/request";
 
 const inr = new Intl.NumberFormat("en-IN", { style: "currency", currency: "INR", maximumFractionDigits: 0 });
 
@@ -65,9 +65,25 @@ export const SECTION_LABELS: Record<Section, string> = {
 export const STATUS_LABELS: Record<RequestStatus, string> = {
   DRAFT: "Draft",
   SUBMITTED: "Submitted",
+  RETURNED: "Returned for correction",
   WITH_SECTION: "With section",
   REJECTED: "Rejected",
   WITH_ESTATE: "With Estate",
   COSTED: "Costed",
   ADVANCE_INTIMATED: "Advance intimated",
+};
+
+export const DECISION_LABELS: Record<LineDecision, string> = {
+  PENDING: "Awaiting decision",
+  CONFIRMED: "Confirmed",
+  REJECTED: "Rejected",
+};
+
+/** What each status means for the requester, in plain words. */
+export const STATUS_HELP: Partial<Record<RequestStatus, string>> = {
+  SUBMITTED: "Facilities is checking your request.",
+  RETURNED: "Facilities has sent this back for correction. Edit it and submit again.",
+  WITH_SECTION: "The Academic and/or Sports section is deciding on each facility.",
+  REJECTED: "None of the facilities could be approved.",
+  WITH_ESTATE: "All sections have decided. Next, Estate adds the electricity estimate and Facilities works out the costs.",
 };
