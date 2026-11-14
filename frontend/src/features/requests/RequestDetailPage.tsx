@@ -4,6 +4,7 @@ import { errorMessage } from "../../api/client";
 import { deleteDraft, getEvents } from "../../api/requests";
 import { CostBreakdown, PaymentInstructions } from "../../components/CostBreakdown";
 import { DecisionBadge } from "../../components/DecisionBadge";
+import { ProofDocument } from "../../components/ProofDocument";
 import { StatusBadge } from "../../components/StatusBadge";
 import { ErrorState, LoadingState } from "../../components/States";
 import { Timeline } from "../../components/Timeline";
@@ -24,7 +25,7 @@ export function RequestDetailPage() {
   const id = Number(useParams().id);
   const navigate = useNavigate();
   const [params] = useSearchParams();
-  const { request, error, reload } = useRequest(id);
+  const { request, setRequest, error, reload } = useRequest(id);
   const [events, setEvents] = useState<TimelineEvent[]>([]);
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
@@ -157,6 +158,8 @@ export function RequestDetailPage() {
           <p className="hint">{preview.note}</p>
         </div>
       </div>
+
+      <ProofDocument request={request} onUploaded={setRequest} />
 
       {request.costs && (
         <div className="panel">

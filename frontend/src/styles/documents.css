@@ -1,0 +1,17 @@
+/* Govt./PSU proof document on a request (final release). */
+.proof--missing {
+  border-left: 4px solid var(--danger);
+}
+.proof__file {
+  margin: 0.5rem 0;
+  overflow-wrap: anywhere;
+}
+.upload-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-top: 0.75rem;
+}
+.upload-field input[type="file"] {
+  max-width: 100%;
+}

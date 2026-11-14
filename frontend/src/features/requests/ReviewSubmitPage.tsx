@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { errorMessage } from "../../api/client";
 import { getTerms, submitRequest } from "../../api/requests";
+import { ProofDocument } from "../../components/ProofDocument";
 import { StepIndicator } from "../../components/StepIndicator";
 import { ErrorState, LoadingState } from "../../components/States";
 import type { Terms } from "../../types/request";
@@ -13,7 +14,7 @@ import "../../styles/workflow.css";
 export function ReviewSubmitPage() {
   const id = Number(useParams().id);
   const navigate = useNavigate();
-  const { request, error, reload } = useRequest(id);
+  const { request, setRequest, error, reload } = useRequest(id);
   const [terms, setTerms] = useState<Terms | null>(null);
   const [accepted, setAccepted] = useState(false);
   const [busy, setBusy] = useState(false);
@@ -32,6 +33,7 @@ export function ReviewSubmitPage() {
 
   const { event, lines, charges_preview: preview } = request;
   const resubmitting = request.status === "RETURNED";
+  const missingProof = Boolean(request.needs_document && !request.document);
 
   async function submit() {
     if (!accepted || !terms) {
@@ -116,6 +118,8 @@ export function ReviewSubmitPage() {
         <p className="hint">{preview.note}</p>
       </div>
 
+      <ProofDocument request={request} onUploaded={setRequest} />
+
       <div className="panel">
         <h2 id="terms-heading">Terms and conditions</h2>
         {terms.is_placeholder && (
@@ -130,6 +134,7 @@ export function ReviewSubmitPage() {
         </label>
       </div>
 
+      {missingProof && <p className="hint">Upload the proof document above to submit.</p>}
       {submitError && (
         <div className="alert alert--error" role="alert">
           {submitError}
@@ -143,7 +148,7 @@ export function ReviewSubmitPage() {
           type="button"
           className="button"
           onClick={() => void submit()}
-          disabled={busy || lines.length === 0 || !accepted}
+          disabled={busy || lines.length === 0 || !accepted || missingProof}
         >
           {busy ? "Submitting…" : resubmitting ? "Resubmit to Facilities" : "Submit to Facilities"}
         </button>
