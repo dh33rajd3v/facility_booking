@@ -3,7 +3,8 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 
-from app.api.deps import StaffContext, get_notifier, require_role
+from app.api.deps import StaffContext, document_response, get_notifier, require_role
+from app.api.requests import get_document_service
 from app.core.errors import AppError
 from app.db.session import get_db
 from app.schemas.workflow import (
@@ -17,6 +18,7 @@ from app.schemas.workflow import (
     StaffRequestOut,
 )
 from app.services.notification_service import Notifier
+from app.services.request_document_service import RequestDocumentService
 from app.services.workflow_service import WorkflowService
 
 router = APIRouter(tags=["workflow"])
@@ -49,6 +51,16 @@ def staff_request_view(
     request_id: int, staff: StaffContext = Depends(any_desk), service: WorkflowService = Depends(get_workflow)
 ) -> StaffRequestOut:
     return service.staff_view(request_id, staff.roles)
+
+
+@router.get("/workflow/requests/{request_id}/document")
+def staff_request_document(
+    request_id: int,
+    staff: StaffContext = Depends(facility_desk),
+    service: RequestDocumentService = Depends(get_document_service),
+):
+    """The Govt./PSU proof document, for Facilities to check before forwarding. Other desks can't open it."""
+    return document_response(*service.for_staff(request_id))
 
 
 @router.post("/requests/{request_id}/forward", response_model=StaffRequestOut)

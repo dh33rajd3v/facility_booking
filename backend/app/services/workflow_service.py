@@ -117,7 +117,14 @@ class WorkflowService:
         is_facility = "FACILITY" in roles
         payment_ready = settings_service.payment_url_configured(self.db)
         return StaffRequestOut(
-            request=build_request_out(self.facilities, request, request.rate_category_snapshot, include_costs=True),
+            # Only Facilities checks (and sees) the Govt./PSU proof document.
+            request=build_request_out(
+                self.facilities,
+                request,
+                request.rate_category_snapshot,
+                include_costs=True,
+                include_document=is_facility,
+            ),
             requester_name=request.applicant_name,
             requester_email=request.contact_email,
             timeline=audit_service.timeline(self.db, request.id),

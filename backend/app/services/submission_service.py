@@ -96,6 +96,13 @@ class SubmissionService:
             )
         if user.rate_category is None:
             raise AppError("PROFILE_INCOMPLETE", "Choose your organisation category before submitting.", 409)
+        if user.rate_category == "GOVT" and request.document is None:
+            raise AppError(
+                "DOCUMENT_REQUIRED",
+                "Attach a proof document (Govt./PSU) before submitting. Facilities checks it before forwarding.",
+                422,
+                {"field": "document"},
+            )
         if not request.lines:
             raise AppError("NO_LINES", "Add at least one facility before submitting.", 422)
         if len(request.lines) > MAX_LINES:
@@ -146,7 +153,11 @@ class SubmissionService:
         if self.notifier:
             note = "This is the corrected version of your request." if resubmission else None
             self.notifier.notify_requester(request, "REQUEST_SUBMITTED", event, note=note)
-            self.notifier.notify_role("FACILITY", request, "FACILITY_REVIEW_REQUIRED", event, note=note)
+            staff_note = note
+            if request.rate_category_snapshot == "GOVT":
+                proof = "Govt./PSU rate: check the attached proof document before forwarding."
+                staff_note = f"{note} {proof}" if note else proof
+            self.notifier.notify_role("FACILITY", request, "FACILITY_REVIEW_REQUIRED", event, note=staff_note)
         self.db.commit()
         if self.notifier:
             self.notifier.send_queued()
