@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 from fastapi import Depends, Request
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
 from app.core.config import Settings
@@ -13,6 +14,7 @@ from app.db.models import User, UserSession
 from app.db.session import get_db
 from app.services import roles_service
 from app.services.auth_service import find_session
+from app.services.document_storage import LocalDocumentStorage
 from app.services.notification_service import Notifier
 
 SESSION_COOKIE = "fb_session"
@@ -71,3 +73,19 @@ def get_notifier(request: Request, db: Session = Depends(get_db)) -> Notifier:
     """Email notifier for this API call (shares the call's database session)."""
     settings: Settings = request.app.state.settings
     return Notifier(db, request.app.state.email_sender, settings.frontend_base_url, settings.email_max_attempts)
+
+
+def get_document_storage(request: Request) -> LocalDocumentStorage:
+    """Where proof documents are kept (a private folder; see document_storage)."""
+    return request.app.state.document_storage
+
+
+# Headers for documents sent to the browser: no caching, no content sniffing.
+DOCUMENT_HEADERS = {"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff"}
+
+
+def document_response(path, content_type: str, filename: str) -> FileResponse:
+    """Send a stored document to the browser, to open in a new tab."""
+    return FileResponse(
+        path, media_type=content_type, filename=filename, content_disposition_type="inline", headers=DOCUMENT_HEADERS
+    )

@@ -1,7 +1,14 @@
-from fastapi import APIRouter, Depends, Response
+from fastapi import APIRouter, Depends, File, Response, UploadFile
 from sqlalchemy.orm import Session
 
-from app.api.deps import get_current_user, get_notifier
+from app.api.deps import (
+    document_response,
+    get_app_settings,
+    get_current_user,
+    get_document_storage,
+    get_notifier,
+)
+from app.core.config import Settings
 from app.db.models import User
 from app.db.session import get_db
 from app.schemas.request import (
@@ -16,7 +23,9 @@ from app.schemas.request import (
     TimelineEventOut,
 )
 from app.services import audit_service
+from app.services.document_storage import LocalDocumentStorage
 from app.services.notification_service import Notifier
+from app.services.request_document_service import RequestDocumentService
 from app.services.request_service import RequestService
 from app.services.submission_service import SubmissionService, current_terms
 
@@ -25,6 +34,14 @@ router = APIRouter(prefix="/requests", tags=["requests"])
 
 def get_request_service(db: Session = Depends(get_db)) -> RequestService:
     return RequestService(db)
+
+
+def get_document_service(
+    db: Session = Depends(get_db),
+    settings: Settings = Depends(get_app_settings),
+    storage: LocalDocumentStorage = Depends(get_document_storage),
+) -> RequestDocumentService:
+    return RequestDocumentService(db, storage, max_bytes=settings.max_upload_mb * 1024 * 1024)
 
 
 @router.get("/terms", response_model=TermsOut)
@@ -69,9 +86,14 @@ def update_event_details(
 
 @router.delete("/{request_id}", status_code=204)
 def delete_draft(
-    request_id: int, user: User = Depends(get_current_user), service: RequestService = Depends(get_request_service)
+    request_id: int,
+    user: User = Depends(get_current_user),
+    service: RequestService = Depends(get_request_service),
+    storage: LocalDocumentStorage = Depends(get_document_storage),
 ) -> Response:
-    service.delete(user, request_id)
+    stored_name = service.delete(user, request_id)
+    if stored_name:
+        storage.delete(stored_name)  # the draft's proof document goes with it
     return Response(status_code=204)
 
 
@@ -128,3 +150,25 @@ def get_request_events(
     """The requester's own timeline. Staff see timelines through /workflow/requests/{id}."""
     service.get(user, request_id)  # 404 unless it's the user's own request
     return audit_service.timeline(db, request_id)
+
+
+@router.post("/{request_id}/document", response_model=RequestOut, status_code=201)
+def upload_document(
+    request_id: int,
+    file: UploadFile = File(..., description="PDF, JPG or PNG proof that the organisation is Govt./PSU"),
+    user: User = Depends(get_current_user),
+    service: RequestDocumentService = Depends(get_document_service),
+) -> RequestOut:
+    """Attach (or replace) the Govt./PSU proof document of a draft or returned request."""
+    data = file.file.read(service.max_bytes + 1)  # one byte more than allowed, to detect oversized files
+    return service.upload(user, request_id, file.filename, data)
+
+
+@router.get("/{request_id}/document")
+def get_document(
+    request_id: int,
+    user: User = Depends(get_current_user),
+    service: RequestDocumentService = Depends(get_document_service),
+):
+    """The requester's own proof document. Facilities opens it through /workflow/requests/{id}/document."""
+    return document_response(*service.for_requester(user, request_id))
