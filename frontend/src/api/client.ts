@@ -36,7 +36,9 @@ type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
 export async function apiRequest<T>(method: Method, path: string, body?: unknown, init?: RequestInit): Promise<T> {
   const headers: Record<string, string> = { Accept: "application/json" };
-  if (body !== undefined) headers["Content-Type"] = "application/json";
+  // A file upload (FormData) sets its own multipart Content-Type; everything else is JSON.
+  const isForm = typeof FormData !== "undefined" && body instanceof FormData;
+  if (body !== undefined && !isForm) headers["Content-Type"] = "application/json";
   if (method !== "GET" && csrfToken) headers["X-CSRF-Token"] = csrfToken;
 
   let response: Response;
@@ -45,7 +47,7 @@ export async function apiRequest<T>(method: Method, path: string, body?: unknown
       ...init,
       method,
       headers: { ...headers, ...((init?.headers as Record<string, string>) ?? {}) },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : isForm ? (body as FormData) : JSON.stringify(body),
       credentials: "include", // send the session cookie
     });
   } catch {

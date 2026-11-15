@@ -60,6 +60,14 @@ export interface ChargesPreview {
   note: string;
 }
 
+/** The Govt./PSU proof document attached to a request (final release). */
+export interface RequestDocument {
+  original_filename: string;
+  content_type: string;
+  size_bytes: number;
+  uploaded_at: string;
+}
+
 export interface BookingRequest {
   id: number;
   ref_no: string | null;
@@ -77,6 +85,9 @@ export interface BookingRequest {
   returned_at: string | null;
   /** Week 4: staff see it once costed; the requester after the advance intimation. */
   costs?: CostBreakdown | null;
+  /** Final release: Govt./PSU requests need a proof document. Only the requester and Facilities get `document`. */
+  needs_document?: boolean;
+  document?: RequestDocument | null;
 }
 
 export interface RequestSummary {
